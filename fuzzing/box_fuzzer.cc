@@ -20,9 +20,9 @@
 
 #include <sstream>
 
-#include "libheif/box.h"
-#include "libheif/bitstream.h"
-#include "libheif/logging.h"
+#include "box.h"
+#include "bitstream.h"
+#include "logging.h"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
@@ -31,7 +31,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
   BitstreamRange range(reader, size);
   for (;;) {
     std::shared_ptr<Box> box;
-    Error error = Box::read(range, &box);
+    Error error = Box::read(range, &box, heif_get_global_security_limits());
     if (error != Error::Ok || range.error()) {
       break;
     }

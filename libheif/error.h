@@ -32,11 +32,8 @@
 #include <ostream>
 #include <sstream>
 
-
-#include "heif.h"
-
-
-static constexpr char kSuccess[] = "Success";
+#include "libheif/heif.h"
+#include <cassert>
 
 
 class ErrorBuffer
@@ -80,13 +77,24 @@ public:
         heif_suberror_code sc = heif_suberror_Unspecified,
         const std::string& msg = "");
 
-  static Error Ok;
+  static const Error Ok;
+
+  static const Error InternalError;
 
   static const char kSuccess[];
 
   bool operator==(const Error& other) const { return error_code == other.error_code; }
 
   bool operator!=(const Error& other) const { return !(*this == other); }
+
+  Error operator||(const Error& other) const {
+    if (error_code != heif_error_Ok) {
+      return *this;
+    }
+    else {
+      return other;
+    }
+  }
 
   operator bool() const { return error_code != heif_error_Ok; }
 
@@ -108,9 +116,21 @@ inline std::ostream& operator<<(std::ostream& ostr, const Error& err)
 template <typename T> class Result
 {
 public:
+  Result() = default;
+
+  Result(const T& v) : value(v), error(Error::Ok) {}
+
+  Result(const Error& e) : error(e) {}
+
   operator bool() const { return error.error_code == heif_error_Ok; }
 
-  T value;
+  T& operator*()
+  {
+    assert(error.error_code == heif_error_Ok);
+    return value;
+  }
+
+  T value{};
   Error error;
 };
 

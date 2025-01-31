@@ -20,13 +20,15 @@
 
 #include "libheif/heif.h"
 #include "libheif/heif_plugin.h"
-#include "libheif/common_utils.h"
+#include "common_utils.h"
 #include <algorithm>
 #include <cstring>
 #include <cassert>
 #include <vector>
 #include <string>
+#include <thread>
 #include <memory>
+#include <utility>
 #include "encoder_aom.h"
 
 #include <aom/aom_encoder.h>
@@ -70,6 +72,8 @@ struct encoder_struct_aom
   int threads;
   bool lossless;
   bool lossless_alpha;
+  bool auto_tiles;
+  bool enable_intra_block_copy;
 
 #if defined(HAVE_AOM_CODEC_SET_OPTION)
   std::vector<custom_option> custom_options;
@@ -123,8 +127,8 @@ void encoder_struct_aom::add_custom_option(const custom_option& p)
 void encoder_struct_aom::add_custom_option(std::string name, std::string value)
 {
   custom_option p;
-  p.name = name;
-  p.value = value;
+  p.name = std::move(name);
+  p.value = std::move(value);
   add_custom_option(p);
 }
 
@@ -158,6 +162,8 @@ static const char* kParam_alpha_quality = "alpha-quality";
 static const char* kParam_alpha_min_q = "alpha-min-q";
 static const char* kParam_alpha_max_q = "alpha-max-q";
 static const char* kParam_lossless_alpha = "lossless-alpha";
+static const char* kParam_auto_tiles = "auto-tiles";
+static const char* kParam_enable_intra_block_copy = "enable-intrabc";
 static const char* kParam_threads = "threads";
 static const char* kParam_realtime = "realtime";
 static const char* kParam_speed = "speed";
@@ -196,7 +202,7 @@ static const char* aom_plugin_name()
 }
 
 
-#define MAX_NPARAMETERS 14
+#define MAX_NPARAMETERS 16
 
 static struct heif_encoder_parameter aom_encoder_params[MAX_NPARAMETERS];
 static const struct heif_encoder_parameter* aom_encoder_parameter_ptrs[MAX_NPARAMETERS + 1];
@@ -237,11 +243,17 @@ static void aom_init_parameters()
   p->version = 2;
   p->name = kParam_threads;
   p->type = heif_encoder_parameter_type_integer;
-  p->integer.default_value = 4;
   p->has_default = true;
   p->integer.have_minimum_maximum = true;
   p->integer.minimum = 1;
-  p->integer.maximum = 16;
+  p->integer.maximum = 64;
+  int threads = static_cast<int>(std::thread::hardware_concurrency());
+  if (threads == 0) {
+    // Could not autodetect, use previous default value.
+    threads = 4;
+  }
+  threads = std::min(threads, p->integer.maximum);
+  p->integer.default_value = threads;
   p->integer.valid_values = NULL;
   p->integer.num_valid_values = 0;
   d[i++] = p++;
@@ -352,6 +364,22 @@ static void aom_init_parameters()
   p->name = kParam_lossless_alpha;
   p->type = heif_encoder_parameter_type_boolean;
   p->boolean.default_value = false;
+  p->has_default = true;
+  d[i++] = p++;
+
+  assert(i < MAX_NPARAMETERS);
+  p->version = 2;
+  p->name = kParam_auto_tiles;
+  p->type = heif_encoder_parameter_type_boolean;
+  p->boolean.default_value = false;
+  p->has_default = true;
+  d[i++] = p++;
+
+  assert(i < MAX_NPARAMETERS);
+  p->version = 2;
+  p->name = kParam_enable_intra_block_copy;
+  p->type = heif_encoder_parameter_type_boolean;
+  p->boolean.default_value = true;
   p->has_default = true;
   d[i++] = p++;
 
@@ -564,6 +592,12 @@ struct heif_error aom_set_parameter_boolean(void* encoder_raw, const char* name,
           encoder->alpha_min_q_set = true;
       }
       return heif_error_ok;
+  } else if (strcmp(name, kParam_auto_tiles) == 0) {
+      encoder->auto_tiles = value;
+      return heif_error_ok;
+  } else if (strcmp(name, kParam_enable_intra_block_copy) == 0) {
+      encoder->enable_intra_block_copy = value;
+      return heif_error_ok;
   }
 
   set_value(kParam_realtime, realtime_mode);
@@ -581,6 +615,8 @@ struct heif_error aom_get_parameter_boolean(void* encoder_raw, const char* name,
 
   get_value(kParam_realtime, realtime_mode);
   get_value(kParam_lossless_alpha, lossless_alpha);
+  get_value(kParam_auto_tiles, auto_tiles);
+  get_value(kParam_enable_intra_block_copy, enable_intra_block_copy);
 
   return heif_error_unsupported_parameter;
 }
@@ -757,8 +793,6 @@ struct heif_error aom_encode_image(void* encoder_raw, const struct heif_image* i
 
   // --- copy libheif image to aom image
 
-  aom_image_t input_image;
-
   aom_img_fmt_t img_format = AOM_IMG_FMT_NONE;
 
   int chroma_height = 0;
@@ -792,8 +826,10 @@ struct heif_error aom_encode_image(void* encoder_raw, const struct heif_image* i
     img_format = (aom_img_fmt_t) (img_format | AOM_IMG_FMT_HIGHBITDEPTH);
   }
 
-  if (!aom_img_alloc(&input_image, img_format,
-                     source_width, source_height, 1)) {
+  std::unique_ptr<aom_image_t, void (*)(aom_image_t*)> input_image(aom_img_alloc(nullptr, img_format,
+                                                                                 source_width, source_height, 1),
+                                                                   aom_img_free);
+  if (!input_image) {
     err = {heif_error_Memory_allocation_error,
            heif_suberror_Unspecified,
            "Failed to allocate image"};
@@ -802,8 +838,8 @@ struct heif_error aom_encode_image(void* encoder_raw, const struct heif_image* i
 
 
   for (int plane = 0; plane < 3; plane++) {
-    unsigned char* buf = input_image.planes[plane];
-    const int stride = input_image.stride[plane];
+    unsigned char* buf = input_image->planes[plane];
+    const int stride = input_image->stride[plane];
 
     if (chroma == heif_chroma_monochrome && plane != 0) {
       if (bpp_y == 8) {
@@ -973,13 +1009,18 @@ struct heif_error aom_encode_image(void* encoder_raw, const struct heif_image* i
 #endif
   }
 
+#if defined(AOM_CTRL_AV1E_SET_AUTO_TILES)
+  // aom 3.10.0
+  aom_codec_control(&codec, AV1E_SET_AUTO_TILES, encoder->auto_tiles);
+#endif
+
   // TODO: set AV1E_SET_TILE_ROWS and AV1E_SET_TILE_COLUMNS.
 
 
   struct heif_color_profile_nclx* nclx = nullptr;
   err = heif_image_get_nclx_color_profile(image, &nclx);
   if (err.code != heif_error_Ok) {
-    nclx = nullptr;
+    assert(nclx == nullptr);
   }
 
   // make sure NCLX profile is deleted at end of function
@@ -1011,6 +1052,8 @@ struct heif_error aom_encode_image(void* encoder_raw, const struct heif_image* i
   }
 #endif
 
+  aom_codec_control(&codec, AV1E_SET_ENABLE_INTRABC, encoder->enable_intra_block_copy);
+
 #if defined(HAVE_AOM_CODEC_SET_OPTION)
   // Apply the custom AOM encoder options.
   // These should always be applied last as they can override the values that were set above.
@@ -1021,14 +1064,10 @@ struct heif_error aom_encode_image(void* encoder_raw, const struct heif_image* i
 
   // --- encode frame
 
-  res = aom_codec_encode(&codec, &input_image,
+  res = aom_codec_encode(&codec, input_image.get(),
                          0, // only encoding a single frame
                          1,
                          0); // no flags
-
-  // Note: we are freeing the input image directly after use.
-  // This covers the usual success case and also all error cases that occur below.
-  aom_img_free(&input_image);
 
   if (res != AOM_CODEC_OK) {
     err = {

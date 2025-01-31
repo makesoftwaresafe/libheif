@@ -46,20 +46,21 @@ Op_drop_alpha_plane::state_after_conversion(const ColorState& input_state,
   output_state = input_state;
   output_state.has_alpha = false;
 
-  states.push_back({output_state, SpeedCosts_Trivial});
+  states.emplace_back(output_state, SpeedCosts_Trivial);
 
   return states;
 }
 
 
-std::shared_ptr<HeifPixelImage>
+Result<std::shared_ptr<HeifPixelImage>>
 Op_drop_alpha_plane::convert_colorspace(const std::shared_ptr<const HeifPixelImage>& input,
                                         const ColorState& input_state,
                                         const ColorState& target_state,
-                                        const heif_color_conversion_options& options) const
+                                        const heif_color_conversion_options& options,
+                                        const heif_security_limits* limits) const
 {
-  int width = input->get_width();
-  int height = input->get_height();
+  uint32_t width = input->get_width();
+  uint32_t height = input->get_height();
 
   auto outimg = std::make_shared<HeifPixelImage>();
 
@@ -74,7 +75,7 @@ Op_drop_alpha_plane::convert_colorspace(const std::shared_ptr<const HeifPixelIma
                                heif_channel_G,
                                heif_channel_B}) {
     if (input->has_channel(channel)) {
-      outimg->copy_new_plane_from(input, channel, channel);
+      outimg->copy_new_plane_from(input, channel, channel, limits);
     }
   }
 

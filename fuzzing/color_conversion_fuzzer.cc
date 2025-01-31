@@ -22,9 +22,9 @@
 
 #include <sstream>
 
-#include "libheif/bitstream.h"
-#include "libheif/color-conversion/colorconversion.h"
-#include "libheif/pixelimage.h"
+#include "bitstream.h"
+#include "color-conversion/colorconversion.h"
+#include "pixelimage.h"
 
 static bool is_valid_chroma(uint8_t chroma)
 {
@@ -59,7 +59,7 @@ static bool is_valid_colorspace(uint8_t colorspace)
 
 static bool read_plane(BitstreamRange* range,
                        std::shared_ptr<HeifPixelImage> image, heif_channel channel,
-                       int width, int height, int bit_depth)
+                       uint32_t width, uint32_t height, int bit_depth)
 {
   if (width <= 0 || height <= 0) {
     return false;
@@ -70,14 +70,14 @@ static bool read_plane(BitstreamRange* range,
   if (!range->prepare_read(static_cast<size_t>(width) * height)) {
     return false;
   }
-  if (!image->add_plane(channel, width, height, bit_depth)) {
+  if (auto err = image->add_plane(channel, width, height, bit_depth, heif_get_disabled_security_limits())) {
     return false;
   }
-  int stride;
+  uint32_t stride;
   uint8_t* plane = image->get_plane(channel, &stride);
   assert(stride >= width);
   auto stream = range->get_istream();
-  for (int y = 0; y < height; y++, plane += stride) {
+  for (uint32_t y = 0; y < height; y++, plane += stride) {
     assert(stream->read(plane, width));
   }
   return true;
@@ -85,7 +85,7 @@ static bool read_plane(BitstreamRange* range,
 
 static bool read_plane_interleaved(BitstreamRange* range,
                                    std::shared_ptr<HeifPixelImage> image, heif_channel channel,
-                                   int width, int height, int bit_depth, int comps)
+                                   uint32_t width, uint32_t height, int bit_depth, int comps)
 {
   if (width <= 0 || height <= 0) {
     return false;
@@ -96,14 +96,14 @@ static bool read_plane_interleaved(BitstreamRange* range,
   if (!range->prepare_read(static_cast<size_t>(width) * height * comps)) {
     return false;
   }
-  if (!image->add_plane(channel, width, height, bit_depth)) {
+  if (auto err = image->add_plane(channel, width, height, bit_depth, heif_get_disabled_security_limits())) {
     return false;
   }
-  int stride;
+  uint32_t stride;
   uint8_t* plane = image->get_plane(channel, &stride);
   assert(stride >= width * comps);
   auto stream = range->get_istream();
-  for (int y = 0; y < height; y++, plane += stride) {
+  for (uint32_t y = 0; y < height; y++, plane += stride) {
     assert(stream->read(plane, width * comps));
   }
   return true;
@@ -114,8 +114,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
   auto reader = std::make_shared<StreamReader_memory>(data, size, false);
   BitstreamRange range(reader, size);
 
-  int width;
-  int height;
+  uint32_t width;
+  uint32_t height;
   int bit_depth;
   bool alpha;
   uint8_t in_chroma;
@@ -250,18 +250,22 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
   int output_bpp = 0; // Same as input.
   heif_encoding_options* options = heif_encoding_options_alloc();
 
-  auto out_image = convert_colorspace(in_image,
-                                      static_cast<heif_colorspace>(out_colorspace),
-                                      static_cast<heif_chroma>(out_chroma),
-                                      nullptr,
-                                      output_bpp,
-                                      options->color_conversion_options);
+  auto out_image_result = convert_colorspace(in_image,
+                                             static_cast<heif_colorspace>(out_colorspace),
+                                             static_cast<heif_chroma>(out_chroma),
+                                             nullptr,
+                                             output_bpp,
+                                             options->color_conversion_options,
+                                             heif_get_disabled_security_limits());
+
   heif_encoding_options_free(options);
 
-  if (!out_image) {
+  if (out_image_result.error) {
     // Conversion is not supported.
     return 0;
   }
+
+  auto out_image = *out_image_result;
 
   assert(out_image->get_width() == width);
   assert(out_image->get_height() == height);

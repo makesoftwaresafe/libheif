@@ -36,6 +36,7 @@ extern "C" {
 
 static const char* kError_unsupported_bit_depth = "Bit depth not supported by x265";
 static const char* kError_unsupported_image_size = "Images smaller than 16 pixels are not supported";
+static const char* kError_unsupported_ctu_size = "Unsupported CTU size";
 
 
 enum parameter_type
@@ -45,8 +46,6 @@ enum parameter_type
 
 struct parameter
 {
-
-
   parameter_type type = UndefinedType;
   std::string name;
 
@@ -85,6 +84,8 @@ struct encoder_struct_x265
   std::string tune;
 
   int logLevel = X265_LOG_NONE;
+
+  std::string last_error_message;
 };
 
 
@@ -738,7 +739,7 @@ static struct heif_error x265_encode_image(void* encoder_raw, const struct heif_
       struct heif_error err = {
           heif_error_Encoder_plugin_error,
           heif_suberror_Invalid_parameter_value,
-          kError_unsupported_image_size
+          kError_unsupported_ctu_size
       };
       return err;
   }
@@ -790,7 +791,7 @@ static struct heif_error x265_encode_image(void* encoder_raw, const struct heif_
   struct heif_color_profile_nclx* nclx = nullptr;
   heif_error err = heif_image_get_nclx_color_profile(image, &nclx);
   if (err.code != heif_error_Ok) {
-    nclx = nullptr;
+    assert(nclx == nullptr);
   }
 
   // make sure NCLX profile is deleted at end of function
@@ -859,7 +860,15 @@ static struct heif_error x265_encode_image(void* encoder_raw, const struct heif_
     }
     else if (strncmp(p.name.c_str(), "x265:", 5) == 0) {
       std::string x265p = p.name.substr(5);
-      api->param_parse(param, x265p.c_str(), p.value_string.c_str());
+      if (api->param_parse(param, x265p.c_str(), p.value_string.c_str()) < 0) {
+        encoder->last_error_message = std::string{"Unsupported x265 encoder parameter: "} + x265p;
+
+        return {
+          .code = heif_error_Usage_error,
+          .subcode = heif_suberror_Unsupported_parameter,
+          .message = encoder->last_error_message.c_str()
+        };
+      }
     }
   }
 
@@ -901,11 +910,22 @@ static struct heif_error x265_encode_image(void* encoder_raw, const struct heif_
 
   encoder->encoder = api->encoder_open(param);
 
+#if X265_BUILD == 212
+  // In x265 build version 212, the signature of the encoder_encode() function was changed. But it was changed back in version 213.
+  // https://bitbucket.org/multicoreware/x265_git/issues/952/crash-in-libheif-tests
+  x265_picture* out_pic = NULL;
+  api->encoder_encode(encoder->encoder,
+                      &encoder->nals,
+                      &encoder->num_nals,
+                      pic,
+                      &out_pic);
+#else
   api->encoder_encode(encoder->encoder,
                       &encoder->nals,
                       &encoder->num_nals,
                       pic,
                       NULL);
+#endif
 
   api->picture_free(pic);
   api->param_free(param);
@@ -967,11 +987,20 @@ static struct heif_error x265_get_compressed_data(void* encoder_raw, uint8_t** d
     encoder->nal_output_counter = 0;
 
 
+#if X265_BUILD == 212
+    x265_picture* out_pic = NULL;
+    int result = api->encoder_encode(encoder->encoder,
+                                     &encoder->nals,
+                                     &encoder->num_nals,
+                                     NULL,
+                                     &out_pic);
+#else
     int result = api->encoder_encode(encoder->encoder,
                                      &encoder->nals,
                                      &encoder->num_nals,
                                      NULL,
                                      NULL);
+#endif
     if (result <= 0) {
       *data = nullptr;
       *size = 0;
