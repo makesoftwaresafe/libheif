@@ -36,12 +36,13 @@
 // '128 << (bit_depth - 8)', shifting an 'int' by 56: undefined behaviour
 // (UndefinedBehaviorSanitizer abort in Op_mono_to_YCbCr420::convert_colorspace).
 //
-// The fix rejects a real (non-nop) color conversion of any image with a channel
-// wider than 16 bits, at the single entry point of the pipeline in
-// convert_colorspace(). This test builds such a file, confirms the decoder path
-// itself is unaffected (the untransformed decode still returns the 64-bit
-// monochrome plane), and requires the conversions that used to run the
-// unsupported operators to fail cleanly instead.
+// Each operator now declines a bit depth it cannot access, so an operator that
+// cannot handle a wide sample never offers itself to the pipeline and pipeline
+// construction fails; convert_colorspace() keeps a backstop check behind that.
+// This test builds such a file, confirms the decoder path itself is unaffected
+// (the untransformed decode still returns the 64-bit monochrome plane), and
+// requires the conversions that used to run the unsupported operators to fail
+// cleanly instead.
 
 #include "catch_amalgamated.hpp"
 #include "libheif/heif.h"
@@ -215,12 +216,20 @@ TEST_CASE("unci with a 64-bit component refuses color conversion instead of shif
   // Converting to YCbCr 4:2:0 selects Op_mono_to_YCbCr420, which computed the
   // chroma midpoint as '128 << (bit_depth - 8)'. With a 64-bit component that
   // shifted an 'int' by 56. The conversion must now be refused cleanly.
+  //
+  // Op_mono_to_YCbCr420::state_after_conversion() declines a sample wider than 16
+  // bits, so pipeline construction fails before the catch-all in
+  // convert_colorspace() is reached: the subcode is Unsupported_color_conversion.
+  // Should the operators ever stop declining wide samples, the catch-all answers
+  // with Unsupported_bit_depth instead. Either refusal is correct here; what
+  // matters is that the conversion does not run and nothing shifts out of range.
   {
     heif_image* img = nullptr;
     err = heif_decode_image(handle, &img, heif_colorspace_YCbCr, heif_chroma_420, nullptr);
     INFO("YCbCr decode error (" << err.code << "/" << err.subcode << "): " << err.message);
     REQUIRE(err.code == heif_error_Unsupported_feature);
-    REQUIRE(err.subcode == heif_suberror_Unsupported_bit_depth);
+    REQUIRE((err.subcode == heif_suberror_Unsupported_color_conversion ||
+             err.subcode == heif_suberror_Unsupported_bit_depth));
     REQUIRE(img == nullptr);
 
     if (img != nullptr) {

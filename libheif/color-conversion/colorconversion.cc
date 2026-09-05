@@ -628,12 +628,12 @@ Result<std::shared_ptr<HeifPixelImage>> convert_colorspace(const std::shared_ptr
     // 56 (OSS-Fuzz 5154611212910592). A nop conversion is handled above and still hands
     // the image through untouched, so wide components stay accessible to the caller.
     //
-    // This is a catch-all. The constraint properly belongs in each operator's
-    // state_after_conversion(), where Op_YCbCr_to_RGB already declines an input wider
-    // than 16 bits: an operator that cannot handle a bit depth should not offer itself
-    // to the pipeline for it. Several operators currently bound the depth from below
-    // only (e.g. '(bits_per_pixel > 8) != hdr'). Remove this check once an operator
-    // actually supports more than 16 bits per component.
+    // This is a backstop, not the primary defence. The constraint belongs in each
+    // operator's state_after_conversion(), and every operator now declares it there
+    // (most through has_samples_wider_than_16bit()), so construct_pipeline() above
+    // already fails for a wider input and a real conversion never reaches this loop.
+    // Keep it until an operator actually supports more than 16 bits per component,
+    // then remove it together with that operator's call to the helper.
 
     for (heif_channel channel : channels) {
       if (input->get_bits_per_pixel(channel) > 16) {

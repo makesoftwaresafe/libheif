@@ -40,6 +40,10 @@ Op_RGB_to_YCbCr<Pixel>::state_after_conversion(const ColorState& input_state,
     return {};
   }
 
+  if (has_samples_wider_than_16bit(input_state)) {
+    return {};
+  }
+
   // TODO: add support for <8 bpp
   if (input_state.bits_per_pixel < 8) {
     return {};
@@ -340,6 +344,10 @@ Op_RRGGBBxx_HDR_to_YCbCr420::state_after_conversion(const ColorState& input_stat
     return {};
   }
 
+  if (has_samples_wider_than_16bit(input_state)) {
+    return {};
+  }
+
   int matrix = target_state.nclx.get_matrix_coefficients();
   if (matrix == 0 || matrix == 8 || matrix == 11 || matrix == 14) {
     return {};
@@ -531,6 +539,12 @@ Op_RGB24_32_to_YCbCr::state_after_conversion(const ColorState& input_state,
   if (input_state.colorspace != heif_colorspace_RGB ||
       (input_state.chroma != heif_chroma_interleaved_RGB &&
        input_state.chroma != heif_chroma_interleaved_RGBA)) {
+    return {};
+  }
+
+  // The interleaved input is indexed as bytes and the output is hard-coded to 8 bits,
+  // so this operator handles 8-bit input only.
+  if (input_state.bits_per_pixel != 8) {
     return {};
   }
 
@@ -828,6 +842,12 @@ Op_RGB24_32_to_YCbCr444_GBR::state_after_conversion(const ColorState& input_stat
   if (input_state.colorspace != heif_colorspace_RGB ||
       (input_state.chroma != heif_chroma_interleaved_RGB &&
        input_state.chroma != heif_chroma_interleaved_RGBA)) {
+    return {};
+  }
+
+  // The interleaved input is indexed as bytes and the output is hard-coded to 8 bits,
+  // so this operator handles 8-bit input only.
+  if (input_state.bits_per_pixel != 8) {
     return {};
   }
 

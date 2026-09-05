@@ -148,6 +148,12 @@ Op_to_sdr_planes::state_after_conversion(const ColorState& input_state,
     return {};
   }
 
+  // Every channel, alpha included, is read through a uint16_t* and shifted down by
+  // (bits_per_pixel - 8).
+  if (has_samples_wider_than_16bit(input_state)) {
+    return {};
+  }
+
   std::vector<ColorStateWithCost> states;
 
   ColorState output_state;

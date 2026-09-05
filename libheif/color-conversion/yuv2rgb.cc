@@ -75,7 +75,8 @@ Op_YCbCr_to_RGB<Pixel>::state_after_conversion(const ColorState& input_state,
     return {};
   }
 
-  if (input_state.bits_per_pixel > 16) {
+  // Also covers the alpha plane, which is copied through at its own bit depth below.
+  if (has_samples_wider_than_16bit(input_state)) {
     return {};
   }
 
@@ -594,6 +595,10 @@ Op_YCbCr420_to_RRGGBBaa::state_after_conversion(const ColorState& input_state,
   if (input_state.colorspace != heif_colorspace_YCbCr ||
       input_state.chroma != heif_chroma_420 ||
       input_state.bits_per_pixel <= 8) {
+    return {};
+  }
+
+  if (has_samples_wider_than_16bit(input_state)) {
     return {};
   }
 

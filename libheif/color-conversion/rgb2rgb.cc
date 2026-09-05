@@ -164,6 +164,10 @@ Op_RGB_HDR_to_RRGGBBaa_BE::state_after_conversion(const ColorState& input_state,
     return {};
   }
 
+  if (has_samples_wider_than_16bit(input_state)) {
+    return {};
+  }
+
   if (input_state.has_alpha && input_state.get_alpha_bits_per_pixel() != input_state.bits_per_pixel) {
     return {};
   }
@@ -454,6 +458,10 @@ Op_RRGGBBaa_BE_to_RGB_HDR::state_after_conversion(const ColorState& input_state,
     return {};
   }
 
+  if (has_samples_wider_than_16bit(input_state)) {
+    return {};
+  }
+
   std::vector<ColorStateWithCost> states;
 
   ColorState output_state;
@@ -668,6 +676,12 @@ Op_RRGGBBaa_swap_endianness::state_after_conversion(const ColorState& input_stat
        input_state.chroma != heif_chroma_interleaved_RRGGBB_BE &&
        input_state.chroma != heif_chroma_interleaved_RRGGBBAA_LE &&
        input_state.chroma != heif_chroma_interleaved_RRGGBBAA_BE)) {
+    return {};
+  }
+
+  // Swaps the two bytes of each component, which is only meaningful for components
+  // that are stored in 16 bits.
+  if (has_samples_wider_than_16bit(input_state)) {
     return {};
   }
 

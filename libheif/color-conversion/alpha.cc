@@ -143,6 +143,10 @@ Op_flatten_alpha_plane<Pixel>::state_after_conversion(const ColorState& input_st
     return {};
   }
 
+  if (has_samples_wider_than_16bit(input_state)) {
+    return {};
+  }
+
   if (input_state.has_alpha && input_state.get_alpha_bits_per_pixel() != input_state.bits_per_pixel) {
     return {};
   }
@@ -363,6 +367,12 @@ Op_adjust_alpha_bit_depth::state_after_conversion(const ColorState& input_state,
       input_state.chroma != heif_chroma_420 &&
       input_state.chroma != heif_chroma_422 &&
       input_state.chroma != heif_chroma_444) {
+    return {};
+  }
+
+  // Rewrites the alpha plane from its own bit depth to the colour bit depth, so both
+  // ends have to be accessible as 8- or 16-bit samples.
+  if (has_samples_wider_than_16bit(input_state)) {
     return {};
   }
 
