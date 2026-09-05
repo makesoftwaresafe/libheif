@@ -618,6 +618,31 @@ Result<std::shared_ptr<HeifPixelImage>> convert_colorspace(const std::shared_ptr
     return input;
   }
   else {
+    // Every color-conversion operator is written for 8-bit or 16-bit integer samples.
+    // They access the planes through uint8_t* / uint16_t* and derive shift amounts and
+    // midpoint values from the bit depth (e.g. '128 << (bpp - 8)' in Op_mono_to_YCbCr420).
+    // An 'unci' component may however declare a bit depth of up to 256 bits, of which we
+    // accept up to 128 (64-bit integers, 32/64-bit floats, complex numbers). Those are
+    // stored by HeifPixelImage so that they can be read through the component API. A
+    // 64-bit monochrome component reached Op_mono_to_YCbCr420 and shifted an 'int' by
+    // 56 (OSS-Fuzz 5154611212910592). A nop conversion is handled above and still hands
+    // the image through untouched, so wide components stay accessible to the caller.
+    //
+    // This is a catch-all. The constraint properly belongs in each operator's
+    // state_after_conversion(), where Op_YCbCr_to_RGB already declines an input wider
+    // than 16 bits: an operator that cannot handle a bit depth should not offer itself
+    // to the pipeline for it. Several operators currently bound the depth from below
+    // only (e.g. '(bits_per_pixel > 8) != hdr'). Remove this check once an operator
+    // actually supports more than 16 bits per component.
+
+    for (heif_channel channel : channels) {
+      if (input->get_bits_per_pixel(channel) > 16) {
+        return Error{heif_error_Unsupported_feature,
+                     heif_suberror_Unsupported_bit_depth,
+                     "Color conversion of images with more than 16 bits per component is not supported."};
+      }
+    }
+
     // The YCbCr color-conversion operators assume that luma and chroma share a
     // single bit depth: several of them read the chroma planes with a sample width
     // derived from the luma bit depth. A file may however declare per-component bit
