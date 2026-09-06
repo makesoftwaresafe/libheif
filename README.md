@@ -300,9 +300,9 @@ You can also add plugin directories programmatically.
 
 ## Usage
 
-Libheif comes with a set of command line tools:
-* `heif-dec` for decoding HEIF images to JPEG, PNG, TIFF, WebP, Y4M. It can also decode image sequences or MP4 video.
-* `heif-enc` for encoding JPEG, PNG, TIFF, WebP, Y4M, or HEIF/AVIF images to HEIF/AVIF images, image sequences.
+libheif comes with a set of command line tools:
+* `heif-dec` for decoding HEIF images to JPEG, PNG, TIFF, WebP, or Y4M. It can also decode image sequences or MP4 video.
+* `heif-enc` for encoding JPEG, PNG, TIFF, WebP, Y4M, raw pixel data, or HEIF/AVIF images to HEIF/AVIF images, image sequences, or MP4 video.
 * `heif-info` for getting some overview information about the HEIF file or (using the `-d` option) to dump the full box structure of the file.
 * `heif-view` for displaying HEIF image sequences
 
@@ -365,8 +365,8 @@ This is `libheif` running in JavaScript in your browser.
 ## Example programs
 
 Some example programs are provided in the `examples` directory.
-The program `heif-dec` converts all images stored in an HEIF/AVIF file to JPEG, PNG, TIFF, WebP, Y4M.
-`heif-enc` lets you convert JPEG, PNG, TIFF, WebP, Y4M and HEIF/AVIF files to HEIF/AVIF.
+The program `heif-dec` converts all images stored in an HEIF/AVIF file to JPEG, PNG, TIFF, WebP, or Y4M.
+`heif-enc` lets you convert JPEG, PNG, TIFF, WebP, Y4M, raw pixel data (`.raw`, `.img`), and HEIF/AVIF files to HEIF/AVIF.
 The program `heif-info` is a simple, minimal decoder that dumps the file structure to the console.
 
 For example convert `example.heic` to JPEGs and one of the JPEGs back to HEIF:
