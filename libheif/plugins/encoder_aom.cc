@@ -98,6 +98,9 @@ struct encoder_struct_aom
 
   heif_chroma chroma = heif_chroma_420;
 
+  // bit depth the codec was initialized with, to check the later frames of a sequence against
+  int bit_depth = 8;
+
   // --- input
 
   bool alpha_quality_set = false;
@@ -1170,6 +1173,8 @@ static heif_error aom_start_sequence_encoding_intern(void* encoder_raw, const he
     return err;
   }
 
+  encoder->bit_depth = bpp_y;
+
   aom_codec_err_t aom_error;
 
   aom_error = aom_codec_control(&codec, AOME_SET_CPUUSED, encoder->cpu_used); CHECK_ERROR;
@@ -1266,6 +1271,14 @@ static heif_error aom_encode_sequence_frame(void* encoder_raw, const heif_image*
 
   encoder_struct_aom* encoder = (encoder_struct_aom*) encoder_raw;
   aom_codec_ctx_t& codec = encoder->codec;
+
+  // AOM_CODEC_USE_HIGHBITDEPTH was decided when the codec was initialized from the
+  // first frame of the sequence. libaom refuses a frame that disagrees with it, but
+  // with an error that says nothing about the cause.
+  input_error = check_sequence_frame_bit_depth(image, encoder->bit_depth);
+  if (input_error.code != heif_error_Ok) {
+    return input_error;
+  }
 
   heif_error err;
 

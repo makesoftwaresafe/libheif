@@ -54,10 +54,14 @@
  *   - JPEG 2000 signals a precision per component and genuinely supports it,
  *     which is why the OpenJPEG and OpenJPH plugins do not use this check.
  *
- * 'supported_bit_depths' is the set the codec allows. It is a codec level
- * constraint and does not replace a plugin's own check against the encoder
- * library actually linked in (x265_api_get(), uvg_api_get() and friends), which
- * is what decides whether this particular build can do 10 or 12 bits.
+ * 'supported_bit_depths' is the set this plugin can actually encode. Where that
+ * is narrower than what the codec allows because of the encoder library, the
+ * plugin has to pass the narrower set: only x265 answers the question at run
+ * time, where x265_api_get() returns NULL for a depth the linked build does not
+ * provide. uvg_api_get() and kvz_api_get() look like they do the same, but both
+ * are 'return &..._8bit_api;' upstream and never fail, so the uvg266 and kvazaar
+ * builds are pinned at compile time by UVG_BIT_DEPTH / KVZ_BIT_DEPTH and those
+ * are what the two plugins pass here.
  *
  * TODO: this per-plugin check is a stopgap. What is really needed is a proper
  * plugin API through which an encoder describes the input formats it accepts
@@ -123,6 +127,37 @@ static inline heif_error check_encoder_input_image(const heif_image* image,
   return heif_error{heif_error_Encoder_plugin_error,
                     heif_suberror_Unsupported_bit_depth,
                     "Encoder cannot encode images at this bit depth"};
+}
+
+
+/*
+ * An encoder is opened once per sequence, in *_start_sequence_encoding(), and is
+ * configured from the first frame. Encoder_HEVC / Encoder_AVC / Encoder_AVIF /
+ * Encoder_VVC::encode_sequence_frame() call it only while the encoder is not
+ * running yet, so every later frame goes straight to *_encode_sequence_frame().
+ * A plugin that latched a bit depth there and applies it to the planes of a later
+ * frame walks a one byte per sample plane at two bytes per sample: x265, for
+ * example, hands the plane pointers of the current frame to libx265 together with
+ * pic->bitDepth taken from the first frame, and reads past the end of them.
+ *
+ * So a plugin that keeps the bit depth across frames has to check every frame
+ * against that configuration and not only against the codec level set above.
+ * Plugins whose depth is fixed at compile time need nothing extra: passing that
+ * constant to check_encoder_input_image() already pins all frames to one value.
+ *
+ * Call this after check_encoder_input_image(), which has already established that
+ * the luma channel exists and that the chroma channels have the same depth.
+ */
+static inline heif_error check_sequence_frame_bit_depth(const heif_image* image,
+                                                        int configured_bit_depth)
+{
+  if (heif_image_get_bits_per_pixel_range(image, heif_channel_Y) != configured_bit_depth) {
+    return heif_error{heif_error_Encoder_plugin_error,
+                      heif_suberror_Unsupported_bit_depth,
+                      "All frames of a sequence must have the bit depth of the first frame"};
+  }
+
+  return heif_error_ok;
 }
 
 #endif // LIBHEIF_ENCODER_INPUT_CHECK_H
