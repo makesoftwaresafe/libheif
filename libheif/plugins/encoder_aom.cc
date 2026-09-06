@@ -199,6 +199,13 @@ static const char* const kParam_tune_valid_values[] = {
 };
 
 #if defined(AOM_HAVE_TUNE_IQ)
+static heif_error heif_error_lossless_with_tune_iq = {
+  heif_error_Usage_error,
+  heif_suberror_Invalid_parameter_value,
+  "AOM 'tune=iq' cannot be combined with lossless encoding because libaom enables "
+  "chroma delta-q for this tune. Use 'tune=ssim' or 'tune=psnr' for lossless images."
+};
+
 // This table has been copied from libavif/src/codec_aom.c
 
 // Quality (q) to quantizer (qp) formula for tune=iq (Image Quality), expressed as a look-up table for more clarity.
@@ -1071,6 +1078,9 @@ static heif_error aom_start_sequence_encoding_intern(void* encoder_raw, const he
                         options->version >= 3 &&
                         options->content_kind == heif_sequence_content_kind_video);
 
+  bool is_lossless = (encoder->lossless ||
+                      (input_class == heif_image_input_class_alpha && encoder->lossless_alpha));
+
   aom_tune_metric effective_tune = encoder->tune;
   if (encoder->tune_auto) {
     if (tune_as_video) {
@@ -1097,7 +1107,9 @@ static heif_error aom_start_sequence_encoding_intern(void* encoder_raw, const he
       int aom_version = aom_codec_version();
       bool iq_supports_inter = (aom_version >= aom_version_3_14_0);
 
-      if (!is_identity_matrix &&
+      // libaom turns on chroma delta-q for AOM_TUNE_IQ and then refuses to combine
+      // that with lossless coding, so keep AOM_TUNE_SSIM for lossless images.
+      if (!is_identity_matrix && !is_lossless &&
           (cfg.g_usage == AOM_USAGE_ALL_INTRA || iq_supports_inter) &&
           aom_version >= aom_version_3_13_0) {
         effective_tune = AOM_TUNE_IQ;
@@ -1105,6 +1117,12 @@ static heif_error aom_start_sequence_encoding_intern(void* encoder_raw, const he
 #endif
     }
   }
+
+#if defined(AOM_HAVE_TUNE_IQ)
+  if (is_lossless && effective_tune == AOM_TUNE_IQ) {
+    return heif_error_lossless_with_tune_iq;
+  }
+#endif
 
   int cq_level;
 #if defined(AOM_HAVE_TUNE_IQ)
@@ -1187,7 +1205,7 @@ static heif_error aom_start_sequence_encoding_intern(void* encoder_raw, const he
 
   aom_error = aom_codec_control(&codec, AOME_SET_TUNING, effective_tune); CHECK_ERROR;
 
-  if (encoder->lossless || (input_class == heif_image_input_class_alpha && encoder->lossless_alpha)) {
+  if (is_lossless) {
     aom_error = aom_codec_control(&codec, AV1E_SET_LOSSLESS, 1); CHECK_ERROR;
   }
 
